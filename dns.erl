@@ -1,5 +1,6 @@
 -module(dns).
--compile(export_all).
+%-compile(export_all).
+-export([query/2]).
 
 enc_string(Str) ->
     STR = list_to_binary(Str),
@@ -17,17 +18,21 @@ make_query(ID, Name) ->
     QUERYSTR = [enc_string(STR) || STR <- string:tokens(Name, ".")],
     [HDR, QUERYSTR, <<0:8, 1:16, 1:16>>].
 
-dec_record(<<Type:16, Class:16, TTL:32, 
+dec_record(<<3:2, _:6, _:8, 1:16, Class:16, TTL:32, 
              RDLength:16, RData:RDLength/binary, _Rest/binary>>) ->
-    {record, Type, Class, TTL, RData}.
+    {record, type_A, Class, TTL, RData};
+dec_record(<<3:2, _:6, _:8, 5:16, Class:16, TTL:32, 
+             RDLength:16, RData:RDLength/binary, _Rest/binary>>) ->
+    {Str, _} = dec_strings([], RData),
+    {record, type_CNAME, Class, TTL, Str}.
 
 decode_response(<<ID:16, 1:1, OPCODE:4, AA:1, TC:1, RD:1, RA:1, 0:3, 
                  RCode:4, QDCount:16, ANCount:16, AUTHRS:16, ADDRS:16, Rest/binary>>) ->
     {Strings, Rest2} = dec_strings([], Rest),
-    <<Type:16, Class:16, Rest3/binary>> = Rest2, 
+    <<Type:16, Class:16, Rest3/binary>> = Rest2,
     [{dnsh, ID, 1, OPCODE, AA, TC, RD, RA, RCode, QDCount, ANCount, AUTHRS, ADDRS},
      {question, Strings, Type, Class},
-     {responses, (Rest3)}].
+     {response, dec_record(Rest3)}].
 
 query(Name, Server) ->
     ID = rand:uniform(1 bsl 16),
@@ -38,7 +43,7 @@ query(Name, Server) ->
         {udp, _, _, _, Datagram = <<ID:16, _/binary>>} ->
             gen_udp:close(Socket),
             decode_response(Datagram)
-    after 10000 ->
+    after 1000 ->
             gen_udp:close(Socket),
             {error, timeout}
     end.
